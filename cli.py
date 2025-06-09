@@ -9,6 +9,7 @@ import asyncio
 import logging
 import sys
 from typing import Optional
+import time
 
 from config import settings, validate_configuration
 from services.job_manager import JobManager
@@ -59,6 +60,7 @@ async def process_document(document_id: Optional[int] = None, auto_discover: boo
         print("\n📊 Monitoring job progress...")
         last_status = None
         last_message = None
+        last_status_output = 0
         
         while True:
             current_job = await job_manager.get_job(job.job_id)
@@ -66,8 +68,17 @@ async def process_document(document_id: Optional[int] = None, auto_discover: boo
                 print("❌ Job disappeared unexpectedly")
                 return False
             
+            current_time = time.time()
+            
+            # Check if we should print status update (on change or every 30 seconds)
+            should_print_status = (
+                current_job.status != last_status or 
+                current_job.progress_message != last_message or
+                current_time - last_status_output >= 30.0
+            )
+            
             # Print status updates
-            if current_job.status != last_status or current_job.progress_message != last_message:
+            if should_print_status:
                 status_emoji = {
                     JobStatus.PENDING: "⏳",
                     JobStatus.DOWNLOADING: "⬇️",
@@ -78,12 +89,17 @@ async def process_document(document_id: Optional[int] = None, auto_discover: boo
                     JobStatus.CANCELLED: "🚫"
                 }.get(current_job.status, "❓")
                 
-                print(f"{status_emoji} {current_job.status.upper()}: {current_job.get_status_description()}")
+                # Add elapsed time to status
+                elapsed = current_job.get_duration_seconds()
+                elapsed_str = f" ({elapsed}s elapsed)" if elapsed else ""
+                
+                print(f"{status_emoji} {current_job.status.value.upper()}: {current_job.get_status_description()}{elapsed_str}")
                 if current_job.progress_message:
-                    print(f"   {current_job.progress_message}")
+                    print(f"   📝 {current_job.progress_message}")
                 
                 last_status = current_job.status
                 last_message = current_job.progress_message
+                last_status_output = current_time
             
             # Check if job is complete
             if current_job.status in [JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED]:
@@ -171,6 +187,99 @@ async def show_status() -> bool:
         await job_manager.shutdown()
 
 
+async def monitor_jobs() -> bool:
+    """
+    Monitor active jobs with real-time status updates every 30 seconds.
+    
+    Returns:
+        True if monitoring completed successfully, False otherwise.
+    """
+    job_manager = JobManager()
+    
+    try:
+        print("📊 Starting job monitoring (Press Ctrl+C to stop)...")
+        print("Updates every 30 seconds or when status changes\n")
+        
+        last_update_times = {}  # Track last update time per job
+        
+        while True:
+            try:
+                # Get all jobs
+                jobs = await job_manager.list_jobs()
+                active_jobs = [job for job in jobs if job.status.value in ["pending", "downloading", "processing", "uploading"]]
+                
+                current_time = time.time()
+                
+                if not active_jobs:
+                    print("⏸️  No active jobs found")
+                    print("   Waiting 30 seconds before next check...\n")
+                    await asyncio.sleep(30)
+                    continue
+                
+                print(f"🔄 Found {len(active_jobs)} active job(s):")
+                
+                for job in active_jobs:
+                    job_id = job.job_id
+                    last_update = last_update_times.get(job_id, 0)
+                    
+                    # Check if we should show an update for this job
+                    should_update = (
+                        current_time - last_update >= 30.0 or  # Every 30 seconds
+                        job_id not in last_update_times        # First time seeing this job
+                    )
+                    
+                    if should_update:
+                        # Get status emoji
+                        status_emoji = {
+                            "pending": "⏳",
+                            "downloading": "⬇️",
+                            "processing": "🤖", 
+                            "uploading": "⬆️",
+                            "completed": "✅",
+                            "failed": "❌",
+                            "cancelled": "🚫"
+                        }.get(job.status.value, "❓")
+                        
+                        # Calculate elapsed time
+                        elapsed = job.get_duration_seconds()
+                        elapsed_str = f" ({elapsed}s elapsed)" if elapsed else ""
+                        
+                        # Display job status
+                        print(f"   {status_emoji} Job {job_id} (Doc {job.document_id}) - {job.status.value.upper()}: {job.get_status_description()}{elapsed_str}")
+                        
+                        # Show progress message if available
+                        if job.progress_message:
+                            print(f"      📝 {job.progress_message}")
+                        
+                        last_update_times[job_id] = current_time
+                
+                print()  # Empty line for spacing
+                
+                # Wait before next check
+                await asyncio.sleep(5)  # Check more frequently for status changes
+                
+            except KeyboardInterrupt:
+                print("\n🛑 Monitoring stopped by user")
+                break
+            except Exception as e:
+                logger.error(f"Error during monitoring: {e}")
+                print(f"❌ Monitoring error: {e}")
+                await asyncio.sleep(10)  # Wait before retrying
+        
+        return True
+    
+    except KeyboardInterrupt:
+        print("\n🛑 Monitoring stopped by user")
+        return True
+    except Exception as e:
+        logger.error(f"Error in job monitoring: {e}")
+        print(f"❌ Monitoring failed: {e}")
+        return False
+    
+    finally:
+        await job_manager.shutdown()
+
+
 async def list_jobs() -> bool:
     """
     List all processing jobs.
@@ -230,6 +339,7 @@ Examples:
   %(prog)s --auto-discover            # Process next unprocessed document
   %(prog)s --document-id 123          # Process specific document
   %(prog)s --list-jobs                # List all jobs
+  %(prog)s --monitor-jobs             # Monitor active jobs
         """
     )
     
@@ -255,6 +365,11 @@ Examples:
         "--list-jobs",
         action="store_true",
         help="List all processing jobs"
+    )
+    action_group.add_argument(
+        "--monitor-jobs",
+        action="store_true",
+        help="Monitor active jobs with real-time status updates"
     )
     
     # Parse arguments
@@ -283,6 +398,8 @@ Examples:
         success = asyncio.run(process_document(document_id=args.document_id, auto_discover=False))
     elif args.list_jobs:
         success = asyncio.run(list_jobs())
+    elif args.monitor_jobs:
+        success = asyncio.run(monitor_jobs())
     
     # Exit with appropriate code
     sys.exit(0 if success else 1)

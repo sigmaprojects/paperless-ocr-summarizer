@@ -223,18 +223,83 @@ class BackgroundProcessor:
                 logger.error(f"Failed to create job for document {document_id}")
                 return False
             
-            # Wait for the job to complete
-            while job.status.value in ["pending", "processing", "uploading"]:
-                await asyncio.sleep(2)
+            logger.info(f"📊 Starting job monitoring for document {document_id} (Job ID: {job.job_id})")
+            
+            last_status_check = 0
+            last_status = None
+            last_progress_message = None
+            
+            # Wait for the job to complete with detailed status updates
+            while job.status.value in ["pending", "downloading", "processing", "uploading"]:
+                current_time = asyncio.get_event_loop().time()
+                
+                # Update job status from manager
+                updated_job = await self.job_manager.get_job(job.job_id)
+                if updated_job:
+                    job = updated_job
+                
+                # Check if we should log a status update (every 30 seconds or on status change)
+                should_log_status = (
+                    current_time - last_status_check >= 30.0 or  # Every 30 seconds
+                    job.status != last_status or                 # Status changed
+                    job.progress_message != last_progress_message # Progress message changed
+                )
+                
+                if should_log_status:
+                    # Get status emoji and description
+                    status_emoji = {
+                        "pending": "⏳",
+                        "downloading": "⬇️", 
+                        "processing": "🤖",
+                        "uploading": "⬆️",
+                        "completed": "✅",
+                        "failed": "❌",
+                        "cancelled": "🚫"
+                    }.get(job.status.value, "❓")
+                    
+                    # Calculate elapsed time
+                    elapsed = job.get_duration_seconds()
+                    elapsed_str = f" ({elapsed}s elapsed)" if elapsed else ""
+                    
+                    # Log the status update
+                    logger.info(f"{status_emoji} Document {document_id} - {job.status.value.upper()}: {job.get_status_description()}{elapsed_str}")
+                    
+                    # Log progress message if available
+                    if job.progress_message and job.progress_message != last_progress_message:
+                        logger.info(f"   📝 {job.progress_message}")
+                    
+                    # Update tracking variables
+                    last_status_check = current_time
+                    last_status = job.status
+                    last_progress_message = job.progress_message
+                
+                # Check if processor should stop
                 if not self.is_running:
-                    # Cancel the job if stopping
+                    logger.info(f"🛑 Stopping requested - cancelling job for document {document_id}")
                     await self.job_manager.cancel_job(job.job_id)
                     return False
+                
+                # Wait before next check
+                await asyncio.sleep(2)
             
-            # Check if job completed successfully
+            # Final status check and logging
+            final_job = await self.job_manager.get_job(job.job_id)
+            if final_job:
+                job = final_job
+            
+            # Log final result
+            duration = job.get_duration_seconds()
+            duration_str = f" (took {duration}s)" if duration else ""
+            
             success = job.status.value == "completed"
-            if not success:
-                logger.error(f"Job failed for document {document_id}: {job.error_message}")
+            if success:
+                logger.info(f"🎉 Document {document_id} completed successfully{duration_str}")
+                if job.ocr_path and job.summary_path:
+                    logger.info(f"   📄 Files created: OCR={job.ocr_path}, Summary={job.summary_path}")
+            else:
+                logger.error(f"💥 Document {document_id} failed{duration_str}")
+                if job.error_message:
+                    logger.error(f"   ❌ Error: {job.error_message}")
             
             return success
             

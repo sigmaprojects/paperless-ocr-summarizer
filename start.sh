@@ -143,6 +143,22 @@ run_cli() {
     fi
 }
 
+# Function to monitor jobs
+monitor_jobs() {
+    print_status "Starting job monitoring with 30-second updates..."
+    
+    if ! check_env_file; then
+        exit 1
+    fi
+    
+    if command_exists python; then
+        python cli.py --monitor-jobs
+    else
+        print_error "Python not found"
+        exit 1
+    fi
+}
+
 # Function to show help
 show_help() {
     echo "Paperless AI OCR Startup Script"
@@ -155,6 +171,7 @@ show_help() {
     echo "  stop             Stop Docker containers"
     echo "  status           Check application status"
     echo "  cli [ARGS]       Run CLI with arguments"
+    echo "  monitor          Monitor job status"
     echo "  help             Show this help message"
     echo ""
     echo "Examples:"
@@ -163,6 +180,7 @@ show_help() {
     echo "  $0 cli --status                  # Check status via CLI"
     echo "  $0 cli --document-id 123         # Process specific document"
     echo "  $0 cli --auto-discover           # Process next document"
+    echo "  $0 monitor                       # Monitor job status"
     echo ""
 }
 
@@ -182,6 +200,9 @@ case "${1:-help}" in
         ;;
     cli)
         run_cli "$@"
+        ;;
+    monitor)
+        monitor_jobs
         ;;
     help|--help|-h)
         show_help
