@@ -135,7 +135,7 @@ class PaperlessDocument(BaseModel):
     tags: List[int]
     created: datetime
     modified: datetime
-    original_file_name: str
+    original_file_name: Optional[str] = None
     download_url: Optional[str] = None
 
 

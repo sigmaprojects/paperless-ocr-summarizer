@@ -196,7 +196,7 @@ class BackgroundProcessor:
                                     tags=doc_data.get("tags", []),
                                     created=doc_data["created"],
                                     modified=doc_data["modified"],
-                                    original_file_name=doc_data["original_file_name"]
+                                    original_file_name=doc_data.get("original_file_name") or f"document_{doc_data['id']}.pdf"
                                 )
                                 unprocessed_documents.append(document)
                         
