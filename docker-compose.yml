@@ -1,0 +1,59 @@
+version: '3.8'
+
+services:
+  paperless-ai-ocr:
+    build: .
+    container_name: paperless-ai-ocr
+    restart: unless-stopped
+    ports:
+      - "8574:8574"
+    environment:
+      # Paperless-NGX Configuration
+      - PAPERLESS_BASE_URL=${PAPERLESS_BASE_URL:-http://paperless:8000}
+      - PAPERLESS_TOKEN=${PAPERLESS_TOKEN}
+      - SUMMARIZED_TAG=${SUMMARIZED_TAG:-summarized}
+      
+      # Ollama Configuration
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://ollama:11434}
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-minicpm-v:latest}
+      
+      # Application Configuration
+      - DATA_DIR=/app/data
+      - MAX_CONCURRENT_JOBS=${MAX_CONCURRENT_JOBS:-1}
+      - JOB_TIMEOUT_SECONDS=${JOB_TIMEOUT_SECONDS:-3600}
+      
+      # API Configuration
+      - API_HOST=0.0.0.0
+      - API_PORT=8574
+    volumes:
+      # Persistent data directory for temporary files
+      - paperless-ai-ocr-data:/app/data
+      
+      # Optional: Mount .env file for configuration
+      # - ./.env:/app/.env:ro
+    
+    # Health check
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8574/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    
+    # Depends on external services (uncomment if running everything together)
+    # depends_on:
+    #   - paperless
+    #   - ollama
+    
+    # Network configuration (if using custom networks)
+    # networks:
+    #   - paperless-network
+
+volumes:
+  paperless-ai-ocr-data:
+    driver: local
+
+# Uncomment if you want to define a custom network
+# networks:
+#   paperless-network:
+#     external: true 
