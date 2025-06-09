@@ -13,7 +13,7 @@ on:
 env:
   REGISTRY_DOCKERHUB: docker.io
   REGISTRY_GHCR: ghcr.io
-  IMAGE_NAME: paperless-ai-ocr
+  IMAGE_NAME: paperless-ocr-summarizer
 
 jobs:
   build-and-push:
